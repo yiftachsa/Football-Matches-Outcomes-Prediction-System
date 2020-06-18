@@ -6,6 +6,7 @@ from datetime import datetime as dt
 import itertools
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
+from sklearn.neighbors import KNeighborsClassifier
 folder = 'kaggleDB/'
 database='kaggleDB/all_data.xlsx'
 # read_file = pd.read_excel(r'kaggleDB/all_data.xlsx')
@@ -20,18 +21,20 @@ database='kaggleDB/all_data.xlsx'
 # y_train contains the values - "Home win", "Draw", "Away team".
 # y_test - label column of all matches from the season 15/16.
 
-classifier = RandomForestClassifier(criterion='gini',
-                             n_estimators=700, # num of trees in the forest
-                             min_samples_split=10,
-                             min_samples_leaf=1,
-                             max_features='auto',
-                             oob_score=True,
-                             random_state=1,
-                             n_jobs=-1)
+# model = RandomForestClassifier(criterion='gini',
+                         #    n_estimators=700, # num of trees in the forest
+                         #    min_samples_split=10,
+                         #    min_samples_leaf=1,
+                         #    max_features='auto',
+                         #    oob_score=True,
+                         #    random_state=1,
+                         #    n_jobs=-1)
 
-classifier.fit(X_train, y_train)
+model = KNeighborsClassifier()
+
+model.fit(X_train, y_train)
 # Predicting result
-Y_pred = classifier.predict(X_test)
+Y_pred = model.predict(X_test)
 # calculate mean accuracy
 mean_accuracy = accuracy_score(y_test, Y_pred)
 print("hi")
