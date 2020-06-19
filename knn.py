@@ -883,7 +883,7 @@ def fill_na(dataframe):
         if dtypes[col] == 'float64' or dtypes[col] == 'int64':
             dataframe[col].fillna(dataframe[col].mean(), inplace=True)
         else:
-            dataframe[col].filna(stats.mode(dataframe[col]), inplace=True)
+            dataframe[col].fillna(stats.mode(dataframe[col]), inplace=True)
     return dataframe
 
 
@@ -901,21 +901,21 @@ rows = ["country_id", "league_id", "season", "stage", "date", "match_api_id", "h
         "away_player_2", "away_player_3", "away_player_4", "away_player_5", "away_player_6",
         "away_player_7", "away_player_8", "away_player_9", "away_player_10", "away_player_11"]
 # Fetching required data tables
-match_data = pd.read_excel('./all_data.xlsx', sheet_name='match', usecols=rows)
+match_data = pd.read_excel('kaggleDB/all_data.xlsx', sheet_name='match')
 print("finish match")
 # player_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'player')
 # print("finish player")
 # team_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'team')
 # print("finish team")
-player_stats_data = pd.read_excel('./all_data.xlsx', sheet_name='player_attribute')
+player_stats_data = pd.read_excel('kaggleDB/all_data.xlsx', sheet_name='player_attribute')
 print("finish team_attribute")
 
 # Reduce match data to fulfill run time requirements
 
-match_data = fill_na(match_data)
+# match_data = fill_na(match_data)
 match_data.dropna(subset=rows, inplace=True)
-match_data = match_data.tail(2500)
-## Generating features, exploring the data, and preparing data for model training
+match_data = match_data.tail(100)
+# Generating features, exploring the data, and preparing data for model training
 # Generating or retrieving already existant FIFA data
 fifa_data = get_fifa_data(match_data, player_stats_data, data_exists=False)
 
