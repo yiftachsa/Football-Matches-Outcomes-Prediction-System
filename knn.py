@@ -482,184 +482,6 @@ def get_bookkeeper_probs(matches, bookkeepers, horizontal=False):
     return probs
 
 
-def plot_confusion_matrix(y_test, X_test, clf, dim_reduce, path, cmap=plt.cm.Blues, normalize=False):
-    ''' Plot confusion matrix for given classifier and data. '''
-
-    # Define label names and get confusion matrix values
-    labels = ["Win", "Draw", "Defeat"]
-    cm = confusion_matrix(y_test, clf.predict(dim_reduce.transform(X_test)), labels)
-
-    # Check if matrix should be normalized
-    if normalize == True:
-        # Normalize
-        cm = cm.astype('float') / cm.sum()
-
-    # Configure figure
-    sns.set_style("whitegrid", {"axes.grid": False})
-    fig = plt.figure(1)
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    title = "Confusion matrix of a {} with {}"
-    plt.title(title)
-    plt.colorbar()
-    tick_marks = np.arange(len(labels))
-    plt.xticks(tick_marks, labels, rotation=45)
-    plt.yticks(tick_marks, labels)
-    thresh = cm.max() / 2.
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, round(cm[i, j], 2),
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
-    plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-
-    plt.show()
-
-    # Print classification report
-    y_pred = clf.predict(dim_reduce.transform(X_test))
-    print(classification_report(y_test, y_pred))
-
-
-def compare_probabilities(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, verbose=False):
-    ''' Map bookkeeper and model probabilities. '''
-
-    # Create features and labels for given matches
-    feables = create_feables(matches, fifa_data, bk, get_overall=True, verbose=False)
-
-    # Ensure consistency
-    match_ids = list(feables['match_api_id'])
-    matches = matches[matches['match_api_id'].isin(match_ids)]
-
-    # Get bookkeeper probabilities
-    if verbose == True:
-        print("Obtaining bookkeeper probabilities...")
-    bookkeeper_probs = get_bookkeeper_probs(matches, bookkeepers)
-    bookkeeper_probs.reset_index(inplace=True, drop=True)
-
-    inputs = feables.drop('match_api_id', axis=1)
-    labels = inputs.loc[:, 'label']
-    features = inputs.drop('label', axis=1)
-
-    # Get model probabilities
-    if verbose == True:
-        print("Predicting probabilities based on model...")
-    model_probs = pd.DataFrame()
-    label_table = pd.Series()
-    temp_probs = pd.DataFrame(clf.predict_proba(dim_reduce.transform(features)),
-                              columns=['win_prob', 'draw_prob', 'defeat_prob'])
-    for bookkeeper in bookkeepers:
-        model_probs = model_probs.append(temp_probs, ignore_index=True)
-        label_table = label_table.append(labels)
-    model_probs.reset_index(inplace=True, drop=True)
-    label_table.reset_index(inplace=True, drop=True)
-    bookkeeper_probs['win_prob'] = model_probs['win_prob']
-    bookkeeper_probs['draw_prob'] = model_probs['draw_prob']
-    bookkeeper_probs['defeat_prob'] = model_probs['defeat_prob']
-    bookkeeper_probs['label'] = label_table
-
-    # Aggregate win probabilities for each match
-    wins = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Win', 'win_prob', 'label']]
-    wins.loc[:, 'bet'] = 'Win'
-    wins = wins.rename(columns={'Win': 'bookkeeper_prob',
-                                'win_prob': 'model_prob'})
-
-    # Aggregate draw probabilities for each match
-    draws = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Draw', 'draw_prob', 'label']]
-    draws.loc[:, 'bet'] = 'Draw'
-    draws = draws.rename(columns={'Draw': 'bookkeeper_prob',
-                                  'draw_prob': 'model_prob'})
-
-    # Aggregate defeat probabilities for each match
-    defeats = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Defeat', 'defeat_prob', 'label']]
-    defeats.loc[:, 'bet'] = 'Defeat'
-    defeats = defeats.rename(columns={'Defeat': 'bookkeeper_prob',
-                                      'defeat_prob': 'model_prob'})
-
-    total = pd.concat([wins, draws, defeats])
-
-    # Return total
-    return total
-
-
-def find_good_bets(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, percentile, prob_cap, verbose=False):
-    ''' Find good bets for a given classifier and matches. '''
-
-    # Compare model and classifier probabilities
-    probs = compare_probabilities(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, verbose=False)
-    probs.loc[:, 'prob_difference'] = probs.loc[:, "model_prob"] - probs.loc[:, "bookkeeper_prob"]
-
-    # Sort by createst difference to identify most underestimated bets
-    values = probs['prob_difference']
-    values = values.sort_values(ascending=False)
-    values.reset_index(inplace=True, drop=True)
-
-    if verbose == True:
-        print("Selecting attractive bets...")
-
-    # Identify choices that fulfill requirements such as positive difference, minimum probability and match outcome
-    relevant_choices = probs[(probs.prob_difference > 0) & (probs.model_prob > prob_cap) & (probs.bet != "Draw")]
-
-    # Select given percentile of relevant choices
-    top_percent = 1 - percentile
-    choices = relevant_choices[
-        relevant_choices.prob_difference >= relevant_choices.prob_difference.quantile(top_percent)]
-    choices.reset_index(inplace=True, drop=True)
-
-    # Return choices
-    return choices
-
-
-def get_reward(choice, matches):
-    ''' Get the reward of a given bet. '''
-
-    # Identify bet
-    match = matches[matches.match_api_id == choice.match_api_id]
-    bet_data = match.loc[:, (match.columns.str.contains(choice.bookkeeper))]
-    cols = bet_data.columns.values
-    cols[:3] = ['win', 'draw', 'defeat']
-    bet_data.columns = cols
-
-    # Identfiy bet type and get quota
-    if choice.bet == 'Win':
-        bet_quota = bet_data.win.values
-    elif choice.bet == 'Draw':
-        bet_quota = bet_data.draw.values
-    elif choice.bet == 'Defeat':
-        bet_quota = bet_data.defeat.values
-    else:
-        print("Error")
-
-    # Check label and compute reward
-    if choice.bet == choice.label:
-        reward = bet_quota
-    else:
-        reward = 0
-
-    # Return reward
-    return reward
-
-
-def execute_bets(bet_choices, matches, verbose=False):
-    ''' Get rewards for all bets. '''
-
-    if verbose == True:
-        print("Obtaining reward for chosen bets...")
-    total_reward = 0
-    total_invested = 0
-
-    # Loop through bets
-    loops = np.arange(0, bet_choices.shape[0])
-    for i in loops:
-        # Get rewards and accumulate profit
-        reward = get_reward(bet_choices.iloc[i, :], matches)
-        total_reward = total_reward + reward
-        total_invested += 1
-
-    # Compute investment return
-    investment_return = float(total_reward / total_invested) - 1
-
-    # Return investment return
-    return investment_return
 
 
 def explore_data(features, inputs, path):
@@ -703,171 +525,7 @@ def explore_data(features, inputs, path):
     return feature_details
 
 
-def find_best_classifier(classifiers, dm_reductions, scorer, X_t, y_t, X_c, y_c, X_v, y_v, cv_sets, params, jobs):
-    ''' Tune all classifier and dimensionality reduction combiantions to find best classifier. '''
 
-    # Initialize result storage
-    clfs_return = []
-    dm_reduce_return = []
-    train_scores = []
-    test_scores = []
-
-    # Loop through dimensionality reductions
-    for dm in dm_reductions:
-
-        # Loop through classifiers
-        for clf in classifiers:
-            # Grid search, calibrate, and test the classifier
-            clf, dm_reduce, train_score, test_score = train_calibrate_predict(clf=clf, dm_reduction=dm, X_train=X_t,
-                                                                              y_train=y_t,
-                                                                              X_calibrate=X_c, y_calibrate=y_c,
-                                                                              X_test=X_v, y_test=y_v, cv_sets=cv_sets,
-                                                                              params=params[clf], scorer=scorer,
-                                                                              jobs=jobs, use_grid_search=True)
-
-            # Append the result to storage
-            clfs_return.append(clf)
-            dm_reduce_return.append(dm_reduce)
-            train_scores.append(train_score)
-            test_scores.append(test_score)
-
-    # Return storage
-    return clfs_return, dm_reduce_return, train_scores, test_scores
-
-
-def plot_training_results(clfs, dm_reductions, train_scores, test_scores, path):
-    ''' Plot results of classifier training. '''
-
-    # Set graph format
-    sns.set_style("whitegrid")
-    sns.set_context("paper", font_scale=1, rc={"lines.linewidth": 1})
-    ax = plt.subplot(111)
-    w = 0.5
-    x = np.arange(len(train_scores))
-    ax.set_yticks(x + w)
-    ax.legend((train_scores[0], test_scores[0]), ("Train Scores", "Test Scores"))
-    names = []
-
-    # Loop throuugh classifiers
-    for i in range(0, len(clfs)):
-        # Define temporary variables
-        clf = clfs[i]
-        clf_name = clf.base_estimator.__class__.__name__
-        dm = dm_reductions[i]
-        dm_name = dm.__class__.__name__
-
-        # Create and store name
-        name = "{} with {}".format(clf_name, dm_name)
-        names.append(name)
-
-    # Plot all names in horizontal bar plot
-    ax.set_yticklabels((names))
-    plt.xlim(0.5, 0.55)
-    plt.barh(x, test_scores, color='b', alpha=0.6)
-    plt.title("Test Data Accuracy Scores")
-    fig = plt.figure(1)
-
-    plt.show()
-
-
-def optimize_betting(best_clf, best_dm_reduce, bk_cols_selected, bk_cols, match_data, fifa_data,
-                     n_samples, sample_size, parameter_1_grid, parameter_2_grid, verbose=False):
-    ''' Tune parameters of bet selection algorithm. '''
-
-    # Generate data samples
-    samples = []
-    for i in range(0, n_samples):
-        sample = match_data.sample(n=sample_size, random_state=42)
-        samples.append(sample)
-
-    results = pd.DataFrame(columns=["parameter_1", "parameter_2", "results"])
-    row = 0
-
-    # Iterate over all 1 parameter
-    for i in parameter_1_grid:
-
-        # Iterate over all 2 parameter
-        for j in parameter_2_grid:
-
-            # Compute average score over all samples
-            profits = []
-            for sample in samples:
-                choices = find_good_bets(best_clf, best_dm_reduce, bk_cols_selected, bk_cols, sample, fifa_data, i, j)
-                profit = execute_bets(choices, match_data)
-                profits.append(profit)
-            result = np.mean(np.array(profits))
-            results.loc[row, "results"] = result
-            results.loc[row, "parameter_1"] = i
-            results.loc[row, "parameter_2"] = j
-            row = row + 1
-            if verbose == True: print("Simulated parameter combination: {}".format(row))
-
-    # Return best setting and result
-    best_result = results.loc[results['results'].idxmax()]
-    return best_result
-
-
-def plot_bookkeeper_cf_matrix(matches, bookkeepers, path, verbose=False, normalize=True):
-    ''' Plot confusion matrix of bookkeeper predictions. '''
-
-    if verbose == True: print("Obtaining labels...")
-
-    # Get match labels
-    y_test_temp = matches.apply(get_match_label, axis=1)
-
-    if verbose == True: print("Obtaining bookkeeper probabilities...")
-
-    # Get bookkeeper probabilities
-    bookkeeper_probs = get_bookkeeper_probs(matches, bookkeepers)
-    bookkeeper_probs.reset_index(inplace=True, drop=True)
-    bookkeeper_probs.dropna(inplace=True)
-
-    if verbose == True: print("Obtaining bookkeeper labels...")
-
-    # Get bookkeeper labels
-    y_pred_temp = pd.DataFrame()
-    y_pred_temp.loc[:, 'bk_label'] = bookkeeper_probs[['Win', 'Draw', 'Defeat']].idxmax(axis=1)
-    y_pred_temp.loc[:, 'match_api_id'] = bookkeeper_probs.loc[:, 'match_api_id']
-
-    if verbose == True: print("Plotting confusion matrix...")
-
-    # Format data
-    results = pd.merge(y_pred_temp, y_test_temp, on='match_api_id', how='left')
-    y_test = results.loc[:, 'label']
-    y_pred = results.loc[:, 'bk_label']
-
-    # Generate confusion matrix
-    labels = ["Win", "Draw", "Defeat"]
-    cm = confusion_matrix(y_test, y_pred, labels)
-
-    # Check for normalization
-    if normalize == True:
-        cm = cm.astype('float') / cm.sum()
-
-    # Plot confusion matrix
-    sns.set_style("whitegrid", {"axes.grid": False})
-    fig = plt.figure(1)
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    title = "Confusion matrix of Bookkeeper predictions!"
-    plt.title(title)
-    plt.colorbar()
-    tick_marks = np.arange(len(labels))
-    plt.xticks(tick_marks, labels, rotation=45)
-    plt.yticks(tick_marks, labels)
-    thresh = cm.max() / 2.
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, round(cm[i, j], 2),
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
-    plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-
-    plt.show()
-
-    # Print classification report and accuracy score of bookkeepers
-    print(classification_report(y_test, y_pred))
-    print("Bookkeeper score for test set: {:.4f}.".format(accuracy_score(y_test, y_pred)))
 
 def fill_na(dataframe):
     """
@@ -883,7 +541,7 @@ def fill_na(dataframe):
         if dtypes[col] == 'float64' or dtypes[col] == 'int64':
             dataframe[col].fillna(dataframe[col].mean(), inplace=True)
         else:
-            dataframe[col].filna(stats.mode(dataframe[col]), inplace=True)
+            dataframe[col].fillna(stats.mode(dataframe[col]), inplace=True)
     return dataframe
 
 
@@ -901,7 +559,7 @@ rows = ["country_id", "league_id", "season", "stage", "date", "match_api_id", "h
         "away_player_2", "away_player_3", "away_player_4", "away_player_5", "away_player_6",
         "away_player_7", "away_player_8", "away_player_9", "away_player_10", "away_player_11"]
 # Fetching required data tables
-match_data = pd.read_excel('./all_data.xlsx', sheet_name='match', usecols=rows)
+match_data = pd.read_excel('./all_data.xlsx', sheet_name='match')
 print("finish match")
 # player_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'player')
 # print("finish player")
@@ -912,9 +570,9 @@ print("finish team_attribute")
 
 # Reduce match data to fulfill run time requirements
 
-match_data = fill_na(match_data)
+#match_data = fill_na(match_data)
 match_data.dropna(subset=rows, inplace=True)
-match_data = match_data.tail(2500)
+match_data = match_data.tail(1500)
 ## Generating features, exploring the data, and preparing data for model training
 # Generating or retrieving already existant FIFA data
 fifa_data = get_fifa_data(match_data, player_stats_data, data_exists=False)
@@ -995,3 +653,349 @@ print(mean_accuracy)
 #
 # #Plotting train and test scores
 # plot_training_results(clfs, dm_reductions, np.array(train_scores), np.array(test_scores), path = path)
+
+# def plot_confusion_matrix(y_test, X_test, clf, dim_reduce, path, cmap=plt.cm.Blues, normalize=False):
+#     ''' Plot confusion matrix for given classifier and data. '''
+#
+#     # Define label names and get confusion matrix values
+#     labels = ["Win", "Draw", "Defeat"]
+#     cm = confusion_matrix(y_test, clf.predict(dim_reduce.transform(X_test)), labels)
+#
+#     # Check if matrix should be normalized
+#     if normalize == True:
+#         # Normalize
+#         cm = cm.astype('float') / cm.sum()
+#
+#     # Configure figure
+#     sns.set_style("whitegrid", {"axes.grid": False})
+#     fig = plt.figure(1)
+#     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+#     title = "Confusion matrix of a {} with {}"
+#     plt.title(title)
+#     plt.colorbar()
+#     tick_marks = np.arange(len(labels))
+#     plt.xticks(tick_marks, labels, rotation=45)
+#     plt.yticks(tick_marks, labels)
+#     thresh = cm.max() / 2.
+#     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+#         plt.text(j, i, round(cm[i, j], 2),
+#                  horizontalalignment="center",
+#                  color="white" if cm[i, j] > thresh else "black")
+#     plt.tight_layout()
+#     plt.ylabel('True label')
+#     plt.xlabel('Predicted label')
+#
+#     plt.show()
+#
+#     # Print classification report
+#     y_pred = clf.predict(dim_reduce.transform(X_test))
+#     print(classification_report(y_test, y_pred))
+
+
+# def compare_probabilities(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, verbose=False):
+#     ''' Map bookkeeper and model probabilities. '''
+#
+#     # Create features and labels for given matches
+#     feables = create_feables(matches, fifa_data, bk, get_overall=True, verbose=False)
+#
+#     # Ensure consistency
+#     match_ids = list(feables['match_api_id'])
+#     matches = matches[matches['match_api_id'].isin(match_ids)]
+#
+#     # Get bookkeeper probabilities
+#     if verbose == True:
+#         print("Obtaining bookkeeper probabilities...")
+#     bookkeeper_probs = get_bookkeeper_probs(matches, bookkeepers)
+#     bookkeeper_probs.reset_index(inplace=True, drop=True)
+#
+#     inputs = feables.drop('match_api_id', axis=1)
+#     labels = inputs.loc[:, 'label']
+#     features = inputs.drop('label', axis=1)
+#
+#     # Get model probabilities
+#     if verbose == True:
+#         print("Predicting probabilities based on model...")
+#     model_probs = pd.DataFrame()
+#     label_table = pd.Series()
+#     temp_probs = pd.DataFrame(clf.predict_proba(dim_reduce.transform(features)),
+#                               columns=['win_prob', 'draw_prob', 'defeat_prob'])
+#     for bookkeeper in bookkeepers:
+#         model_probs = model_probs.append(temp_probs, ignore_index=True)
+#         label_table = label_table.append(labels)
+#     model_probs.reset_index(inplace=True, drop=True)
+#     label_table.reset_index(inplace=True, drop=True)
+#     bookkeeper_probs['win_prob'] = model_probs['win_prob']
+#     bookkeeper_probs['draw_prob'] = model_probs['draw_prob']
+#     bookkeeper_probs['defeat_prob'] = model_probs['defeat_prob']
+#     bookkeeper_probs['label'] = label_table
+#
+#     # Aggregate win probabilities for each match
+#     wins = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Win', 'win_prob', 'label']]
+#     wins.loc[:, 'bet'] = 'Win'
+#     wins = wins.rename(columns={'Win': 'bookkeeper_prob',
+#                                 'win_prob': 'model_prob'})
+#
+#     # Aggregate draw probabilities for each match
+#     draws = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Draw', 'draw_prob', 'label']]
+#     draws.loc[:, 'bet'] = 'Draw'
+#     draws = draws.rename(columns={'Draw': 'bookkeeper_prob',
+#                                   'draw_prob': 'model_prob'})
+#
+#     # Aggregate defeat probabilities for each match
+#     defeats = bookkeeper_probs[['bookkeeper', 'match_api_id', 'Defeat', 'defeat_prob', 'label']]
+#     defeats.loc[:, 'bet'] = 'Defeat'
+#     defeats = defeats.rename(columns={'Defeat': 'bookkeeper_prob',
+#                                       'defeat_prob': 'model_prob'})
+#
+#     total = pd.concat([wins, draws, defeats])
+#
+#     # Return total
+#     return total
+
+
+# def find_good_bets(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, percentile, prob_cap, verbose=False):
+#     ''' Find good bets for a given classifier and matches. '''
+#
+#     # Compare model and classifier probabilities
+#     probs = compare_probabilities(clf, dim_reduce, bk, bookkeepers, matches, fifa_data, verbose=False)
+#     probs.loc[:, 'prob_difference'] = probs.loc[:, "model_prob"] - probs.loc[:, "bookkeeper_prob"]
+#
+#     # Sort by createst difference to identify most underestimated bets
+#     values = probs['prob_difference']
+#     values = values.sort_values(ascending=False)
+#     values.reset_index(inplace=True, drop=True)
+#
+#     if verbose == True:
+#         print("Selecting attractive bets...")
+#
+#     # Identify choices that fulfill requirements such as positive difference, minimum probability and match outcome
+#     relevant_choices = probs[(probs.prob_difference > 0) & (probs.model_prob > prob_cap) & (probs.bet != "Draw")]
+#
+#     # Select given percentile of relevant choices
+#     top_percent = 1 - percentile
+#     choices = relevant_choices[
+#         relevant_choices.prob_difference >= relevant_choices.prob_difference.quantile(top_percent)]
+#     choices.reset_index(inplace=True, drop=True)
+#
+#     # Return choices
+#     return choices
+
+
+# def get_reward(choice, matches):
+#     ''' Get the reward of a given bet. '''
+#
+#     # Identify bet
+#     match = matches[matches.match_api_id == choice.match_api_id]
+#     bet_data = match.loc[:, (match.columns.str.contains(choice.bookkeeper))]
+#     cols = bet_data.columns.values
+#     cols[:3] = ['win', 'draw', 'defeat']
+#     bet_data.columns = cols
+#
+#     # Identfiy bet type and get quota
+#     if choice.bet == 'Win':
+#         bet_quota = bet_data.win.values
+#     elif choice.bet == 'Draw':
+#         bet_quota = bet_data.draw.values
+#     elif choice.bet == 'Defeat':
+#         bet_quota = bet_data.defeat.values
+#     else:
+#         print("Error")
+#
+#     # Check label and compute reward
+#     if choice.bet == choice.label:
+#         reward = bet_quota
+#     else:
+#         reward = 0
+#
+#     # Return reward
+#     return reward
+
+
+# def execute_bets(bet_choices, matches, verbose=False):
+#     ''' Get rewards for all bets. '''
+#
+#     if verbose == True:
+#         print("Obtaining reward for chosen bets...")
+#     total_reward = 0
+#     total_invested = 0
+#
+#     # Loop through bets
+#     loops = np.arange(0, bet_choices.shape[0])
+#     for i in loops:
+#         # Get rewards and accumulate profit
+#         reward = get_reward(bet_choices.iloc[i, :], matches)
+#         total_reward = total_reward + reward
+#         total_invested += 1
+#
+#     # Compute investment return
+#     investment_return = float(total_reward / total_invested) - 1
+#
+#     # Return investment return
+#     return investment_return
+
+
+# def find_best_classifier(classifiers, dm_reductions, scorer, X_t, y_t, X_c, y_c, X_v, y_v, cv_sets, params, jobs):
+#     ''' Tune all classifier and dimensionality reduction combiantions to find best classifier. '''
+#
+#     # Initialize result storage
+#     clfs_return = []
+#     dm_reduce_return = []
+#     train_scores = []
+#     test_scores = []
+#
+#     # Loop through dimensionality reductions
+#     for dm in dm_reductions:
+#
+#         # Loop through classifiers
+#         for clf in classifiers:
+#             # Grid search, calibrate, and test the classifier
+#             clf, dm_reduce, train_score, test_score = train_calibrate_predict(clf=clf, dm_reduction=dm, X_train=X_t,
+#                                                                               y_train=y_t,
+#                                                                               X_calibrate=X_c, y_calibrate=y_c,
+#                                                                               X_test=X_v, y_test=y_v, cv_sets=cv_sets,
+#                                                                               params=params[clf], scorer=scorer,
+#                                                                               jobs=jobs, use_grid_search=True)
+#
+#             # Append the result to storage
+#             clfs_return.append(clf)
+#             dm_reduce_return.append(dm_reduce)
+#             train_scores.append(train_score)
+#             test_scores.append(test_score)
+#
+#     # Return storage
+#     return clfs_return, dm_reduce_return, train_scores, test_scores
+
+
+# def plot_training_results(clfs, dm_reductions, train_scores, test_scores, path):
+#     ''' Plot results of classifier training. '''
+#
+#     # Set graph format
+#     sns.set_style("whitegrid")
+#     sns.set_context("paper", font_scale=1, rc={"lines.linewidth": 1})
+#     ax = plt.subplot(111)
+#     w = 0.5
+#     x = np.arange(len(train_scores))
+#     ax.set_yticks(x + w)
+#     ax.legend((train_scores[0], test_scores[0]), ("Train Scores", "Test Scores"))
+#     names = []
+#
+#     # Loop throuugh classifiers
+#     for i in range(0, len(clfs)):
+#         # Define temporary variables
+#         clf = clfs[i]
+#         clf_name = clf.base_estimator.__class__.__name__
+#         dm = dm_reductions[i]
+#         dm_name = dm.__class__.__name__
+#
+#         # Create and store name
+#         name = "{} with {}".format(clf_name, dm_name)
+#         names.append(name)
+#
+#     # Plot all names in horizontal bar plot
+#     ax.set_yticklabels((names))
+#     plt.xlim(0.5, 0.55)
+#     plt.barh(x, test_scores, color='b', alpha=0.6)
+#     plt.title("Test Data Accuracy Scores")
+#     fig = plt.figure(1)
+#
+#     plt.show()
+
+
+# def optimize_betting(best_clf, best_dm_reduce, bk_cols_selected, bk_cols, match_data, fifa_data,
+#                      n_samples, sample_size, parameter_1_grid, parameter_2_grid, verbose=False):
+#     ''' Tune parameters of bet selection algorithm. '''
+#
+#     # Generate data samples
+#     samples = []
+#     for i in range(0, n_samples):
+#         sample = match_data.sample(n=sample_size, random_state=42)
+#         samples.append(sample)
+#
+#     results = pd.DataFrame(columns=["parameter_1", "parameter_2", "results"])
+#     row = 0
+#
+#     # Iterate over all 1 parameter
+#     for i in parameter_1_grid:
+#
+#         # Iterate over all 2 parameter
+#         for j in parameter_2_grid:
+#
+#             # Compute average score over all samples
+#             profits = []
+#             for sample in samples:
+#                 choices = find_good_bets(best_clf, best_dm_reduce, bk_cols_selected, bk_cols, sample, fifa_data, i, j)
+#                 profit = execute_bets(choices, match_data)
+#                 profits.append(profit)
+#             result = np.mean(np.array(profits))
+#             results.loc[row, "results"] = result
+#             results.loc[row, "parameter_1"] = i
+#             results.loc[row, "parameter_2"] = j
+#             row = row + 1
+#             if verbose == True: print("Simulated parameter combination: {}".format(row))
+#
+#     # Return best setting and result
+#     best_result = results.loc[results['results'].idxmax()]
+#     return best_result
+
+
+# def plot_bookkeeper_cf_matrix(matches, bookkeepers, path, verbose=False, normalize=True):
+#     ''' Plot confusion matrix of bookkeeper predictions. '''
+#
+#     if verbose == True: print("Obtaining labels...")
+#
+#     # Get match labels
+#     y_test_temp = matches.apply(get_match_label, axis=1)
+#
+#     if verbose == True: print("Obtaining bookkeeper probabilities...")
+#
+#     # Get bookkeeper probabilities
+#     bookkeeper_probs = get_bookkeeper_probs(matches, bookkeepers)
+#     bookkeeper_probs.reset_index(inplace=True, drop=True)
+#     bookkeeper_probs.dropna(inplace=True)
+#
+#     if verbose == True: print("Obtaining bookkeeper labels...")
+#
+#     # Get bookkeeper labels
+#     y_pred_temp = pd.DataFrame()
+#     y_pred_temp.loc[:, 'bk_label'] = bookkeeper_probs[['Win', 'Draw', 'Defeat']].idxmax(axis=1)
+#     y_pred_temp.loc[:, 'match_api_id'] = bookkeeper_probs.loc[:, 'match_api_id']
+#
+#     if verbose == True: print("Plotting confusion matrix...")
+#
+#     # Format data
+#     results = pd.merge(y_pred_temp, y_test_temp, on='match_api_id', how='left')
+#     y_test = results.loc[:, 'label']
+#     y_pred = results.loc[:, 'bk_label']
+#
+#     # Generate confusion matrix
+#     labels = ["Win", "Draw", "Defeat"]
+#     cm = confusion_matrix(y_test, y_pred, labels)
+#
+#     # Check for normalization
+#     if normalize == True:
+#         cm = cm.astype('float') / cm.sum()
+#
+#     # Plot confusion matrix
+#     sns.set_style("whitegrid", {"axes.grid": False})
+#     fig = plt.figure(1)
+#     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+#     title = "Confusion matrix of Bookkeeper predictions!"
+#     plt.title(title)
+#     plt.colorbar()
+#     tick_marks = np.arange(len(labels))
+#     plt.xticks(tick_marks, labels, rotation=45)
+#     plt.yticks(tick_marks, labels)
+#     thresh = cm.max() / 2.
+#     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+#         plt.text(j, i, round(cm[i, j], 2),
+#                  horizontalalignment="center",
+#                  color="white" if cm[i, j] > thresh else "black")
+#     plt.tight_layout()
+#     plt.ylabel('True label')
+#     plt.xlabel('Predicted label')
+#
+#     plt.show()
+#
+#     # Print classification report and accuracy score of bookkeepers
+#     print(classification_report(y_test, y_pred))
+#     print("Bookkeeper score for test set: {:.4f}.".format(accuracy_score(y_test, y_pred)))
