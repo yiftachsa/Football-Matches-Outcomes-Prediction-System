@@ -552,54 +552,71 @@ path = "../input/"  # Insert path here
 
 # Defining the number of jobs to be run in parallel during grid search
 n_jobs = 1  # Insert number of parallel jobs here
-rows = ["country_id", "league_id", "season", "stage", "date", "match_api_id", "home_team_api_id",
-        "away_team_api_id", "home_team_goal", "away_team_goal", "home_player_1", "home_player_2",
-        "home_player_3", "home_player_4", "home_player_5", "home_player_6", "home_player_7",
-        "home_player_8", "home_player_9", "home_player_10", "home_player_11", "away_player_1",
-        "away_player_2", "away_player_3", "away_player_4", "away_player_5", "away_player_6",
-        "away_player_7", "away_player_8", "away_player_9", "away_player_10", "away_player_11"]
-# Fetching required data tables
-match_data = pd.read_excel('kaggleDB/all_data.xlsx', sheet_name='match')
-print("finish match")
-# player_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'player')
-# print("finish player")
-# team_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'team')
-# print("finish team")
-player_stats_data = pd.read_excel('kaggleDB/all_data.xlsx', sheet_name='player_attribute')
-print("finish team_attribute")
+player_stats_data = pd.DataFrame()
+def preprocess(match_path):
+    global player_stats_data
+    # Fetching required data tables
+    match_data = pd.read_excel(match_path, sheet_name='match')
+    print("finish match")
+    # player_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'player')
+    # print("finish player")
+    # team_data = pd.read_excel('C:/Users/orans/Documents/University/all_data.xlsx', 'team')
+    # print("finish team")
+    if player_stats_data.empty:
+        player_stats_data = pd.read_excel('./all_data.xlsx', sheet_name='player_attribute')
+    print("finish team_attribute")
 
-# Reduce match data to fulfill run time requirements
 
-#match_data = fill_na(match_data)
-match_data.dropna(subset=rows, inplace=True)
-match_data = match_data.tail(1500)
-## Generating features, exploring the data, and preparing data for model training
-# Generating or retrieving already existant FIFA data
-fifa_data = get_fifa_data(match_data, player_stats_data, data_exists=False)
+    # Reduce match data to fulfill run time requirements
+    rows = ["country_id", "league_id", "season", "stage", "date", "match_api_id", "home_team_api_id",
+            "away_team_api_id", "home_team_goal", "away_team_goal", "home_player_1", "home_player_2",
+            "home_player_3", "home_player_4", "home_player_5", "home_player_6", "home_player_7",
+            "home_player_8", "home_player_9", "home_player_10", "home_player_11", "away_player_1",
+            "away_player_2", "away_player_3", "away_player_4", "away_player_5", "away_player_6",
+            "away_player_7", "away_player_8", "away_player_9", "away_player_10", "away_player_11"]
 
-# Creating features and labels based on data provided
-bk_cols = ['B365', 'BW', 'IW', 'LB', 'PS', 'WH', 'SJ', 'VC', 'GB', 'BS']
-bk_cols_selected = ['B365', 'BW']
-feables = create_feables(match_data, fifa_data, bk_cols_selected, get_overall=True)
-inputs = feables.drop('match_api_id', axis=1)
+    match_data.dropna(subset=rows, inplace=True)
 
-# Exploring the data and creating visualizations
-labels = inputs.loc[:, 'label']
-features = inputs.drop('label', axis=1)
-features.head(5)
-feature_details = explore_data(features, inputs, path)
+    # TO DELETE
+    match_data = match_data.head(100)
+
+
+    ## Generating features, exploring the data, and preparing data for model training
+    # Generating or retrieving already existant FIFA data
+    fifa_data = get_fifa_data(match_data, player_stats_data, data_exists=False)
+
+    # Creating features and labels based on data provided
+    bk_cols = ['B365', 'BW', 'IW', 'LB', 'PS', 'WH', 'SJ', 'VC', 'GB', 'BS']
+    bk_cols_selected = ['B365', 'BW']
+    feables = create_feables(match_data, fifa_data, bk_cols_selected, get_overall=True)
+
+    # inputs is the aggregated dataframe of all the matches' data
+    inputs = feables.drop('match_api_id', axis=1)
+
+    # Exploring the data and creating visualizations
+    labels = inputs.loc[:, 'label']
+    features = inputs.drop('label', axis=1)
+    features.head(5)
+    #feature_details = explore_data(features, inputs, path)
+
+    return features, labels
+
+x_train, y_train = preprocess('./train.xlsx')
+
+x_test, y_test = preprocess('./test.xlsx')
+
 
 # Splitting the data into Train, Calibrate, and Test data sets
-X_train_calibrate, X_test, y_train_calibrate, y_test = train_test_split(features, labels, test_size=0.2,
-                                                                        random_state=42,
-                                                                        stratify=labels)
-X_train, X_calibrate, y_train, y_calibrate = train_test_split(X_train_calibrate, y_train_calibrate, test_size=0.3,
-                                                              random_state=42,
-                                                              stratify=y_train_calibrate)
+# X_train_calibrate, X_test, y_train_calibrate, y_test = train_test_split(features, labels, test_size=0.2,
+#                                                                         random_state=42,
+#                                                                         stratify=labels)
+# X_train, X_calibrate, y_train, y_calibrate = train_test_split(X_train_calibrate, y_train_calibrate, test_size=0.3,
+#                                                               random_state=42,
+#                                                               stratify=y_train_calibrate)
 model = KNeighborsClassifier()
-model.fit(X_train, y_train)
+model.fit(x_train, y_train)
 # Predicting result
-Y_pred = model.predict(X_test)
+Y_pred = model.predict(x_test)
 # calculate mean accuracy
 mean_accuracy = accuracy_score(y_test, Y_pred)
 print(mean_accuracy)
