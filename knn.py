@@ -423,11 +423,15 @@ def convert_odds_to_prob(match_odds):
 def get_bookkeeper_data(matches, bookkeepers, horizontal=True):
     ''' Aggregates bookkeeper data for all matches and bookkeepers. '''
 
-    bk_data = pd.DataFrame()
+    # bk_data = pd.DataFrame()
+    # in order to calc the mean of all of the bookkeepers' odds
+    num_of_bks = 0
+    avg_bk_data = pd.DataFrame()
 
     # Loop through bookkeepers
     for bookkeeper in bookkeepers:
 
+        num_of_bks = num_of_bks + 1
         # Find columns containing data of bookkeeper
         temp_data = matches.loc[:, (matches.columns.str.contains(bookkeeper))]
         temp_data.loc[:, 'bookkeeper'] = str(bookkeeper)
@@ -450,23 +454,35 @@ def get_bookkeeper_data(matches, bookkeepers, horizontal=True):
             temp_data.drop('bookkeeper', axis=1, inplace=True)
 
             # Rename columns with bookkeeper names
-            win_name = bookkeeper + "_" + "Win"
-            draw_name = bookkeeper + "_" + "Draw"
-            defeat_name = bookkeeper + "_" + "Defeat"
+            # win_name = bookkeeper + "_" + "Win"
+            # draw_name = bookkeeper + "_" + "Draw"
+            # defeat_name = bookkeeper + "_" + "Defeat"
+            # bk home win, bk draw, bk away win
+            win_name = "BKH"
+            draw_name = "BKD"
+            defeat_name = "BKA"
             temp_data.columns.values[:3] = [win_name, draw_name, defeat_name]
 
+            # temp_data is now containing win, draw, lose probabilities of the match, according to 1 bk
             # Aggregate data
-            bk_data = pd.concat([bk_data, temp_data], axis=1)
-        else:
+            if avg_bk_data.empty:
+                avg_bk_data = pd.concat([avg_bk_data, temp_data], axis=1)
+            else: # sum every cell in avg_bk_data with the suitable cell from temp_data
+                avg_bk_data = avg_bk_data + temp_data
+            #bk_data = pd.concat([bk_data, temp_data], axis=1)
+        #else:
             # Aggregate vertically
-            bk_data = bk_data.append(temp_data, ignore_index=True)
+            #bk_data = bk_data.append(temp_data, ignore_index=True)
 
     # If horizontal add match api id to data
     if (horizontal == True):
         temp_data.loc[:, 'match_api_id'] = matches.loc[:, 'match_api_id']
 
-    # Return bookkeeper data
-    return bk_data
+    # Calculate the average probabilities by dividing each cell by the num of bks
+    if num_of_bks > 1:
+        avg_bk_data = avg_bk_data / num_of_bks
+    # Return average bookkeeper data
+    return avg_bk_data
 
 
 def get_bookkeeper_probs(matches, bookkeepers, horizontal=False):
